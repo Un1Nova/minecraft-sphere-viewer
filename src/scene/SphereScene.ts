@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { construction, type SceneStats, type ViewerSettings, type ViewPreset } from '../model';
 import { buildShell, makeStars } from './geometry';
-import { createGlassMaterial, createGlowMaterial, createShellMaterial, createStarMaterial } from './materials';
+import { createChunkOverlay } from './chunks';
+import { clampOpeningRadius, getCutawayCosines } from './cutaway';
+import { createGlassMaterial, createGlowMaterial, createShellMaterial, createStarMaterial, createWorkspaceGridMaterial } from './materials';
 
 export interface SceneController {
   setSettings(settings: ViewerSettings): void;
@@ -21,7 +23,7 @@ export interface SphereSceneOptions {
 type ShellData = ReturnType<typeof buildShell>;
 
 /** Cube faces in the same order as the worker's face mask. */
-function faceGeometry(mask: number): THREE.BufferGeometry {
+export function faceGeometry(mask: number): THREE.BufferGeometry {
   const faces = [
     { n: [1, 0, 0], p: [[0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [0.5, -0.5, 0.5]] },
     { n: [-1, 0, 0], p: [[-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5], [-0.5, -0.5, -0.5]] },
@@ -47,7 +49,7 @@ function faceGeometry(mask: number): THREE.BufferGeometry {
 }
 
 export function createSphereScene(container: HTMLElement, options: SphereSceneOptions): SceneController {
-  let settings = { ...options.settings };
+  let settings = { ...options.settings, cutPosition: clampOpeningRadius(options.settings.cutPosition) };
   let disposed = false;
   let contextLost = false;
   let ready = false;
@@ -60,7 +62,7 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   const mobile = window.matchMedia('(pointer: coarse)').matches;
   let renderer: THREE.WebGLRenderer;
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   } catch {
     options.onError?.('Не удалось запустить 3D. Проверь, включено ли аппаратное ускорение, или открой страницу в другом браузере.');
     return { setSettings() {}, setView() {}, zoom() {}, resetCamera() {}, dispose() {} };
@@ -72,7 +74,7 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
     console.error('Sphere shader:', gl.getProgramInfoLog(program), gl.getShaderInfoLog(vertexShader), gl.getShaderInfoLog(fragmentShader));
     options.onError?.('Видеодрайвер не смог отобразить сцену. Попробуй другой браузер или обнови страницу.');
   };
-  renderer.setClearColor(0x000000, 0);
+  renderer.setClearColor(0xe9eaed, 1);
   renderer.domElement.className = 'sphere-canvas';
   renderer.domElement.setAttribute('aria-label', 'Интерактивная трёхмерная сфера. Перетаскивание вращает, колесо или щипок приближает.');
   renderer.domElement.setAttribute('role', 'img');
@@ -103,10 +105,22 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   const starGroup = new THREE.Group();
   scene.add(shellGroup, glassGroup, starGroup);
 
+  const workspaceGrid = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), createWorkspaceGridMaterial());
+  workspaceGrid.rotation.x = -Math.PI / 2;
+  workspaceGrid.position.y = -104.25;
+  workspaceGrid.name = 'workspace-grid';
+  workspaceGrid.renderOrder = -1;
+  scene.add(workspaceGrid);
+
+  const chunkOverlay = createChunkOverlay();
+  scene.add(chunkOverlay.group);
+
   const shellMaterial = createShellMaterial();
-  shellMaterial.uniforms.uCutaway.value = settings.cutaway ? 1 : 0;
-  shellMaterial.uniforms.uCutPosition.value = settings.cutPosition;
-  const glassMaterial = createGlassMaterial(settings.glassOpacity, settings.showGrid);
+  shellMaterial.uniforms.uShellOpacity.value = THREE.MathUtils.clamp(settings.shellOpacity, 0, 1);
+  let openingRadius = settings.cutaway ? settings.cutPosition : 0;
+  // The glass block pattern is part of the model; showGrid controls only the
+  // external workspace grid and does not erase the platforms' fine detailing.
+  const glassMaterial = createGlassMaterial(settings.glassOpacity, true);
   const glassGeometry = new THREE.BoxGeometry(construction.platformWidth, 1, construction.platformWidth);
   for (const y of construction.slabCenters) {
     const platform = new THREE.Mesh(glassGeometry, glassMaterial);
@@ -164,6 +178,8 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   let frames = 0;
   const cameraDirection = new THREE.Vector3();
   const temporaryVector = new THREE.Vector3();
+  const directionRotation = new THREE.Quaternion();
+  const directionStep = new THREE.Quaternion();
   let hasInitialView = false;
 
   function requestFrame() {
@@ -209,6 +225,7 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
       controls.target.copy(view.target);
       controls.update();
       shellMaterial.uniforms.uCameraDirection.value.copy(camera.position).normalize();
+      shellMaterial.uniforms.uActualCameraDirection.value.copy(camera.position).normalize();
       hasInitialView = true;
     }
     requestFrame();
@@ -241,14 +258,20 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
     if (cameraDirection.lengthSq() < 0.0001) cameraDirection.copy(temporaryVector.set(0, 0, 1).applyQuaternion(camera.quaternion));
     cameraDirection.normalize();
     const fadeSpeed = 1 - Math.exp(-dt * 17);
-    const cutUniform = shellMaterial.uniforms.uCutaway;
-    const thresholdUniform = shellMaterial.uniforms.uCutPosition;
-    cutUniform.value = THREE.MathUtils.lerp(cutUniform.value, settings.cutaway ? 1 : 0, fadeSpeed);
-    thresholdUniform.value = THREE.MathUtils.lerp(thresholdUniform.value, settings.cutPosition, fadeSpeed);
+    const targetRadius = settings.cutaway ? settings.cutPosition : 0;
+    openingRadius = THREE.MathUtils.lerp(openingRadius, targetRadius, fadeSpeed);
+    if (Math.abs(openingRadius - targetRadius) < 0.0001) openingRadius = targetRadius;
     const directionUniform = shellMaterial.uniforms.uCameraDirection.value as THREE.Vector3;
-    directionUniform.lerp(cameraDirection, fadeSpeed).normalize();
-    const fadeMoving = Math.abs(cutUniform.value - (settings.cutaway ? 1 : 0)) > 0.001 ||
-      Math.abs(thresholdUniform.value - settings.cutPosition) > 0.001 || directionUniform.distanceToSquared(cameraDirection) > 0.000001;
+    // Spherical interpolation also handles opposite viewpoints without a zero
+    // direction vector, which normalized linear interpolation could produce.
+    directionRotation.setFromUnitVectors(directionUniform, cameraDirection);
+    directionStep.identity().slerp(directionRotation, fadeSpeed);
+    directionUniform.applyQuaternion(directionStep).normalize();
+    shellMaterial.uniforms.uActualCameraDirection.value.copy(cameraDirection);
+    const cap = getCutawayCosines(openingRadius, camera.position.length(), construction.outerDiameter / 2);
+    shellMaterial.uniforms.uCutOuterCosine.value = cap.outer;
+    shellMaterial.uniforms.uCutInnerCosine.value = cap.inner;
+    const fadeMoving = openingRadius !== targetRadius || directionUniform.distanceToSquared(cameraDirection) > 0.000001;
     renderer.render(scene, camera);
     frames++;
     if (now - statsTime >= 1000) {
@@ -334,12 +357,14 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
 
   function applySettings(next: ViewerSettings) {
     const qualityChanged = next.quality !== settings.quality;
-    settings = { ...next };
+    settings = { ...next, cutPosition: clampOpeningRadius(next.cutPosition) };
     shellGroup.visible = settings.shellVisible;
+    shellMaterial.uniforms.uShellOpacity.value = THREE.MathUtils.clamp(settings.shellOpacity, 0, 1);
     glassGroup.visible = settings.glassVisible;
     starGroup.visible = settings.starsVisible;
+    workspaceGrid.visible = settings.showGrid;
+    chunkOverlay.setMode(settings.chunkMode);
     glassMaterial.uniforms.uOpacity.value = settings.glassOpacity;
-    glassMaterial.uniforms.uGrid.value = settings.showGrid ? 1 : 0;
     starMaterial.uniforms.uIntensity.value = settings.starIntensity;
     glowMaterial.uniforms.uIntensity.value = settings.starIntensity;
     if (qualityChanged) resize();
@@ -376,6 +401,8 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
       controls.removeEventListener('start', cancelCameraTransition);
       controls.removeEventListener('change', requestFrame);
       controls.dispose();
+      scene.remove(chunkOverlay.group);
+      chunkOverlay.dispose();
       const geometries = new Set<THREE.BufferGeometry>();
       const materials = new Set<THREE.Material>();
       scene.traverse((object) => {

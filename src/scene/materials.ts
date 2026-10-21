@@ -4,9 +4,10 @@ export function createShellMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
       uCameraDirection: { value: new THREE.Vector3(0.5, 0.25, 0.8).normalize() },
-      uCutaway: { value: 1 },
-      uCutPosition: { value: 0 },
-      uSoftness: { value: 0.14 },
+      uActualCameraDirection: { value: new THREE.Vector3(0.5, 0.25, 0.8).normalize() },
+      uCutOuterCosine: { value: 1.001 },
+      uCutInnerCosine: { value: 1.002 },
+      uShellOpacity: { value: 1 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorldPosition;
@@ -25,9 +26,10 @@ export function createShellMaterial() {
     `,
     fragmentShader: /* glsl */ `
       uniform vec3 uCameraDirection;
-      uniform float uCutaway;
-      uniform float uCutPosition;
-      uniform float uSoftness;
+      uniform vec3 uActualCameraDirection;
+      uniform float uCutOuterCosine;
+      uniform float uCutInnerCosine;
+      uniform float uShellOpacity;
       varying vec3 vWorldPosition;
       varying vec3 vBlockCenter;
       varying vec3 vNormal;
@@ -43,11 +45,19 @@ export function createShellMaterial() {
       }
 
       void main() {
-        float facing = dot(normalize(vBlockCenter), uCameraDirection);
-        float cut = smoothstep(uCutPosition - uSoftness, uCutPosition + uSoftness, facing);
-        float visibility = 1.0 - uCutaway * cut;
-        if (visibility <= 0.001) discard;
-        if (visibility < 0.999 && screenNoise(gl_FragCoord.xy) > visibility) discard;
+        vec3 radial = normalize(vWorldPosition);
+        float facing = dot(radial, uCameraDirection);
+        float actualFacing = dot(radial, uActualCameraDirection);
+        float cut = smoothstep(uCutOuterCosine, uCutInnerCosine, facing);
+        // The smoothed opening may briefly lag a fast orbit. Never cut the back
+        // hemisphere relative to the actual camera, including during that lag.
+        cut *= smoothstep(0.0, 0.08, actualFacing);
+        float coverage = uShellOpacity * (1.0 - cut);
+        if (coverage <= 0.0) discard;
+        // At 100% density, every fragment outside the narrow opening edge is
+        // fully opaque and writes depth. Only the edge (or explicit user-set
+        // lower density) needs screen-door coverage; no alpha blending is used.
+        if (coverage < 1.0 && screenNoise(gl_FragCoord.xy) >= coverage) discard;
 
         vec3 n = normalize(vNormal);
         vec3 viewDir = normalize(cameraPosition - vWorldPosition);
@@ -73,7 +83,49 @@ export function createShellMaterial() {
     depthWrite: true,
     depthTest: true,
     transparent: false,
+    blending: THREE.NoBlending,
     toneMapped: true,
+  });
+}
+
+/** Thin, antialiased white lines on the work plane below the model. */
+export function createWorkspaceGridMaterial() {
+  return new THREE.ShaderMaterial({
+    vertexShader: /* glsl */ `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec3 vWorldPosition;
+
+      float gridLine(float spacing) {
+        vec2 grid = vWorldPosition.xz / spacing;
+        vec2 derivatives = max(fwidth(grid), vec2(0.00001));
+        vec2 lineDistance = abs(fract(grid - 0.5) - 0.5) / derivatives;
+        float line = 1.0 - smoothstep(0.2, 0.95, min(lineDistance.x, lineDistance.y));
+        float detailFade = 1.0 - smoothstep(0.3, 0.75, max(derivatives.x, derivatives.y));
+        return line * detailFade;
+      }
+
+      void main() {
+        float minor = gridLine(16.0);
+        float major = gridLine(64.0);
+        float fade = 1.0 - smoothstep(180.0, 690.0, length(vWorldPosition.xz));
+        float alpha = max(minor * 0.5, major * 0.78) * fade;
+        if (alpha < 0.001) discard;
+        gl_FragColor = vec4(vec3(1.0), alpha);
+        #include <colorspace_fragment>
+      }
+    `,
+    side: THREE.FrontSide,
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    toneMapped: false,
   });
 }
 
