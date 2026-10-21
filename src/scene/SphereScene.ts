@@ -3,8 +3,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { construction, type SceneStats, type ViewerSettings, type ViewPreset } from '../model';
 import { buildShell, makeStars } from './geometry';
 import { createChunkOverlay } from './chunks';
+import { createCubeEdgesGeometry } from './blockEdges';
 import { clampOpeningRadius, getCutawayCosines } from './cutaway';
-import { createGlassMaterial, createGlowMaterial, createShellMaterial, createStarMaterial, createWorkspaceGridMaterial } from './materials';
+import { createCameraLighting, getCornerView } from './lighting';
+import { createGlassMaterial, createGlowMaterial, createShellDepthMaterial, createShellEdgesMaterial, createShellMaterial, createStarMaterial, createWorkspaceGridMaterial } from './materials';
 
 export interface SceneController {
   setSettings(settings: ViewerSettings): void;
@@ -70,6 +72,8 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.18;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.debug.onShaderError = (gl, program, vertexShader, fragmentShader) => {
     console.error('Sphere shader:', gl.getProgramInfoLog(program), gl.getShaderInfoLog(vertexShader), gl.getShaderInfoLog(fragmentShader));
     options.onError?.('Видеодрайвер не смог отобразить сцену. Попробуй другой браузер или обнови страницу.');
@@ -85,6 +89,8 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
+  const lighting = createCameraLighting(construction.outerDiameter / 2);
+  scene.add(lighting.group);
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -101,6 +107,9 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   controls.zoomToCursor = true;
 
   const shellGroup = new THREE.Group();
+  const solidShellGroup = new THREE.Group();
+  const edgeShellGroup = new THREE.Group();
+  shellGroup.add(solidShellGroup, edgeShellGroup);
   const glassGroup = new THREE.Group();
   const starGroup = new THREE.Group();
   scene.add(shellGroup, glassGroup, starGroup);
@@ -116,6 +125,8 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
   scene.add(chunkOverlay.group);
 
   const shellMaterial = createShellMaterial();
+  const shellDepthMaterial = createShellDepthMaterial(shellMaterial.uniforms);
+  const shellEdgesMaterial = createShellEdgesMaterial(shellMaterial.uniforms);
   shellMaterial.uniforms.uShellOpacity.value = THREE.MathUtils.clamp(settings.shellOpacity, 0, 1);
   let openingRadius = settings.cutaway ? settings.cutPosition : 0;
   // The glass block pattern is part of the model; showGrid controls only the
@@ -194,6 +205,7 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
 
   function getView(preset: ViewPreset) {
     const distance = fitDistance();
+    if (preset === 'corner') return getCornerView(camera.aspect, construction.outerDiameter / 2);
     if (preset === 'front') return { position: new THREE.Vector3(0, 2, distance), target: new THREE.Vector3() };
     if (preset === 'top') return { position: new THREE.Vector3(0, distance, 0.5), target: new THREE.Vector3() };
     if (preset === 'inside') return { position: new THREE.Vector3(33, 1.5, 72), target: new THREE.Vector3(-5, 0, -18) };
@@ -216,6 +228,8 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
     const cap = settings.quality === 'low' ? 1 : settings.quality === 'high' ? 1.6 : mobile ? 1.25 : 1.6;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
     renderer.setSize(width, height, false);
+    const shadowSize = settings.quality === 'low' || (mobile && settings.quality !== 'high') ? 1024 : 2048;
+    lighting.setMapSize(Math.min(shadowSize, renderer.capabilities.maxTextureSize));
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     glowMaterial.uniforms.uHeight.value = height * renderer.getPixelRatio() * 0.5;
@@ -272,6 +286,7 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
     shellMaterial.uniforms.uCutOuterCosine.value = cap.outer;
     shellMaterial.uniforms.uCutInnerCosine.value = cap.inner;
     const fadeMoving = openingRadius !== targetRadius || directionUniform.distanceToSquared(cameraDirection) > 0.000001;
+    lighting.update(camera);
     renderer.render(scene, camera);
     frames++;
     if (now - statsTime >= 1000) {
@@ -291,12 +306,20 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
       const mesh = new THREE.InstancedMesh(geometry, shellMaterial, group.centers.length / 3);
       mesh.frustumCulled = false;
       mesh.name = `shell-faces-${group.faceMask}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.customDepthMaterial = shellDepthMaterial;
       for (let i = 0; i < group.centers.length; i += 3) {
         instanceMatrix.makeTranslation(group.centers[i], group.centers[i + 1], group.centers[i + 2]);
         mesh.setMatrixAt(i / 3, instanceMatrix);
       }
       mesh.instanceMatrix.needsUpdate = true;
-      shellGroup.add(mesh);
+      solidShellGroup.add(mesh);
+      const edges = new THREE.LineSegments(createCubeEdgesGeometry(group.faceMask, group.centers), shellEdgesMaterial);
+      edges.name = `shell-block-edges-${group.faceMask}`;
+      edges.frustumCulled = false;
+      edges.renderOrder = 1;
+      edgeShellGroup.add(edges);
     }
     blockCount = data.blockCount;
     ready = true;
@@ -359,7 +382,14 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
     const qualityChanged = next.quality !== settings.quality;
     settings = { ...next, cutPosition: clampOpeningRadius(next.cutPosition) };
     shellGroup.visible = settings.shellVisible;
+    solidShellGroup.visible = settings.shellStyle === 'solid';
+    edgeShellGroup.visible = settings.shellStyle === 'edges';
     shellMaterial.uniforms.uShellOpacity.value = THREE.MathUtils.clamp(settings.shellOpacity, 0, 1);
+    const shadowsEnabled = settings.shadows && settings.shellStyle === 'solid' && settings.shellVisible && settings.shellOpacity > 0;
+    if (lighting.key.castShadow !== shadowsEnabled) {
+      lighting.setShadows(shadowsEnabled);
+      shellMaterial.needsUpdate = true;
+    }
     glassGroup.visible = settings.glassVisible;
     starGroup.visible = settings.starsVisible;
     workspaceGrid.visible = settings.showGrid;
@@ -403,18 +433,26 @@ export function createSphereScene(container: HTMLElement, options: SphereSceneOp
       controls.dispose();
       scene.remove(chunkOverlay.group);
       chunkOverlay.dispose();
+      lighting.dispose();
       const geometries = new Set<THREE.BufferGeometry>();
       const materials = new Set<THREE.Material>();
+      const instances = new Set<THREE.InstancedMesh>();
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
+        if ((mesh as THREE.InstancedMesh).isInstancedMesh) instances.add(mesh as THREE.InstancedMesh);
         if (mesh.geometry) geometries.add(mesh.geometry);
         if (mesh.material) {
           if (Array.isArray(mesh.material)) mesh.material.forEach((material) => materials.add(material));
           else materials.add(mesh.material);
         }
       });
+      instances.forEach((mesh) => mesh.dispose());
       geometries.forEach((geometry) => geometry.dispose());
       materials.forEach((material) => material.dispose());
+      // customDepthMaterial is not part of Object3D.material traversal.
+      shellDepthMaterial.dispose();
+      if (!materials.has(shellMaterial)) shellMaterial.dispose();
+      if (!materials.has(shellEdgesMaterial)) shellEdgesMaterial.dispose();
       scene.clear();
       renderer.dispose();
       renderer.domElement.remove();

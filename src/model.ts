@@ -5,6 +5,8 @@ export interface ViewerSettings {
   cutPosition: number;
   shellVisible: boolean;
   shellOpacity: number;
+  shellStyle: 'solid' | 'edges';
+  shadows: boolean;
   glassVisible: boolean;
   starsVisible: boolean;
   glassOpacity: number;
@@ -15,7 +17,7 @@ export interface ViewerSettings {
   quality: 'auto' | 'high' | 'low';
 }
 
-export type ViewPreset = 'perspective' | 'front' | 'top' | 'inside';
+export type ViewPreset = 'perspective' | 'front' | 'top' | 'inside' | 'corner';
 
 export interface SceneStats {
   fps: number;
@@ -31,6 +33,8 @@ export const defaultSettings: ViewerSettings = {
   cutPosition: 0.8,
   shellVisible: true,
   shellOpacity: 1,
+  shellStyle: 'solid',
+  shadows: true,
   glassVisible: true,
   starsVisible: true,
   glassOpacity: 0.12,

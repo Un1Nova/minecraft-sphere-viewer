@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { buildSliceBlueprint, distanceToSegment, type BlueprintPlane, type BlueprintPoint, type BlueprintSegment } from './blueprint';
-import { construction } from './model';
+import { construction, type ViewerSettings } from './model';
 import { CHUNK_BOUNDARIES, CHUNK_DETAIL_STEP, CHUNK_EXTENT, type ChunkMode } from './chunks';
 
 export interface BlueprintHandle {
@@ -14,6 +14,7 @@ export interface BlueprintViewProps {
   dimensions?: boolean;
   showGrid?: boolean;
   chunkMode?: ChunkMode;
+  shellStyle?: ViewerSettings['shellStyle'];
 }
 interface Camera2D { zoom: number; x: number; y: number }
 interface DimensionLabel {
@@ -46,7 +47,7 @@ function DimensionLine({ x1, y1, x2, y2, label, vertical = false }: {
 
 /** Независимый от WebGL строительный чертёж из точных клеток сферы. */
 const BlueprintView = forwardRef<BlueprintHandle, BlueprintViewProps>(function BlueprintView({
-  plane = 'front', layer = 98, dimensions = true, showGrid = true, chunkMode = 'off',
+  plane = 'front', layer = 98, dimensions = true, showGrid = true, chunkMode = 'off', shellStyle = 'solid',
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -218,7 +219,7 @@ const BlueprintView = forwardRef<BlueprintHandle, BlueprintViewProps>(function B
         event.preventDefault(); event.stopPropagation();
       }}>
       <title>{planeTitles[plane]} · слой {layer + 1}</title>
-      <desc>Точный срез блочной оболочки. {slice.shellCells.length} чёрных блоков в этом слое. Перетаскивайте для сдвига, используйте колесо или два пальца для масштаба. Нажмите на ступеньку, чтобы увидеть её длину.</desc>
+      <desc>Точный срез блочной оболочки. {slice.shellCells.length} блоков оболочки в этом слое. Перетаскивайте для сдвига, используйте колесо или два пальца для масштаба. Нажмите на ступеньку, чтобы увидеть её длину.</desc>
       <defs>
         <pattern id={`${uid}-space`} patternUnits="userSpaceOnUse" width={gridUnit * scale} height={gridUnit * scale} patternTransform={`translate(${origin.x} ${origin.y})`}>
           <path d={`M0 ${gridUnit * scale}V0H${gridUnit * scale}`} fill="none" stroke="#fff" strokeOpacity={gridUnit === 1 ? 0.62 : 0.9} strokeWidth="0.75" />
@@ -239,9 +240,13 @@ const BlueprintView = forwardRef<BlueprintHandle, BlueprintViewProps>(function B
             {CHUNK_BOUNDARIES.map(value => <path key={value} d={plane === 'top' ? `M${value} ${-CHUNK_EXTENT}V${CHUNK_EXTENT}M${-CHUNK_EXTENT} ${value}H${CHUNK_EXTENT}` : `M${value} ${-CHUNK_EXTENT}V${CHUNK_EXTENT}`} fill="none" />)}
           </g>
         </g>}
-        <path d={slice.shellPath} fill="#272a30" />
-        {scale >= 4 && <rect x={-98} y={-98} width="196" height="196" fill={`url(#${uid}-blocks)`} clipPath={`url(#${uid}-shell)`} />}
-        <path d={slice.outlinePath} fill="none" stroke="#202329" strokeWidth={Math.min(0.16, 0.5 / scale)} />
+        {shellStyle === 'edges'
+          ? <path d={slice.shellEdgesPath} fill="none" stroke="#d92d3d" strokeWidth={Math.min(0.28, 0.75 / scale)} />
+          : <>
+            <path d={slice.shellPath} fill="#8b8b8b" />
+            {scale >= 4 && <rect x={-98} y={-98} width="196" height="196" fill={`url(#${uid}-blocks)`} clipPath={`url(#${uid}-shell)`} />}
+            <path d={slice.outlinePath} fill="none" stroke="#666666" strokeWidth={Math.min(0.16, 0.5 / scale)} />
+          </>}
         {slice.slabs.map((slab, index) => <g key={index}>
           <rect {...slab} fill="#69b3d5" fillOpacity="0.44" stroke="#5093b5" strokeWidth={0.7 / scale} />
           {scale >= 4 && <rect {...slab} fill={`url(#${uid}-blocks)`} />}

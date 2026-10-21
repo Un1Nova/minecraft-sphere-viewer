@@ -67,6 +67,30 @@ test('стекло показывается только при действит
   }
 });
 
+test('каркас показывает каждую сторону каждого блока без повторных общих рёбер', () => {
+  const edgeKey = (x1: number, y1: number, x2: number, y2: number) =>
+    [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)].join(',');
+  // Counts also follow 4 × cell count minus the number of side-sharing pairs.
+  // Polar slices must retain their internal square grid, not just the outline.
+  for (const [layer, expectedCount] of [[0, 656], [7, 1492], [98, 1884], [188, 1492], [195, 656]]) {
+    const slice = buildSliceBlueprint('front', layer);
+    const commands = [...slice.shellEdgesPath.matchAll(/M(-?\d+) (-?\d+)([hv])1/g)];
+    assert.equal(commands.map(command => command[0]).join(''), slice.shellEdgesPath, 'Рёбра состоят из целых единичных отрезков.');
+    const edges = new Set(commands.map(command => {
+      const x = Number(command[1]), y = Number(command[2]);
+      return edgeKey(x, y, x + Number(command[3] === 'h'), y + Number(command[3] === 'v'));
+    }));
+    assert.equal(edges.size, commands.length, `Слой ${layer}: общие рёбра не рисуются дважды.`);
+    assert.equal(edges.size, expectedCount, `Слой ${layer}: точное число рёбер клеток.`);
+    for (const { x, y } of slice.shellCells) {
+      assert.ok(edges.has(edgeKey(x, y, x + 1, y)));
+      assert.ok(edges.has(edgeKey(x + 1, y, x + 1, y + 1)));
+      assert.ok(edges.has(edgeKey(x, y + 1, x + 1, y + 1)));
+      assert.ok(edges.has(edgeKey(x, y, x, y + 1)));
+    }
+  }
+});
+
 test('запрещены дробные и отсутствующие слои', () => {
   assert.throws(() => buildSliceBlueprint('front', -1), RangeError);
   assert.throws(() => buildSliceBlueprint('front', 196), RangeError);
