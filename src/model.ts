@@ -1,13 +1,17 @@
+import type { ChunkMode } from './chunks';
+
 export interface ViewerSettings {
   cutaway: boolean;
   cutPosition: number;
   shellVisible: boolean;
+  shellOpacity: number;
   glassVisible: boolean;
   starsVisible: boolean;
   glassOpacity: number;
   starIntensity: number;
   autoRotate: boolean;
   showGrid: boolean;
+  chunkMode: ChunkMode;
   quality: 'auto' | 'high' | 'low';
 }
 
@@ -24,14 +28,16 @@ export interface SceneStats {
 
 export const defaultSettings: ViewerSettings = {
   cutaway: true,
-  cutPosition: -0.06,
+  cutPosition: 0.8,
   shellVisible: true,
+  shellOpacity: 1,
   glassVisible: true,
   starsVisible: true,
   glassOpacity: 0.12,
   starIntensity: 1,
   autoRotate: false,
   showGrid: true,
+  chunkMode: 'off',
   quality: 'auto',
 };
 
