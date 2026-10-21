@@ -21,6 +21,8 @@ export interface SliceBlueprint {
   solidCount: number;
   shellCells: BlueprintCell[];
   shellPath: string;
+  /** Все рёбра отдельных клеток оболочки, общие рёбра записаны один раз. */
+  shellEdgesPath: string;
   outline: BlueprintPoint[];
   outlinePath: string;
   segments: BlueprintSegment[];
@@ -58,7 +60,7 @@ export function sliceSlabs(plane: BlueprintPlane, coordinate: number): Blueprint
 
 /**
  * Точное сечение той же 3D-оболочки, которую строит buildShell.
- * Для внешнего контура используется заполненный шар, для чёрных клеток —
+ * Для внешнего контура используется заполненный шар, для клеток оболочки —
  * один шестисвязный граничный слой 3D. На полюсах сечение слоя является
  * заполненной шапкой, поэтому заменять его обычным 2D-ободом нельзя.
  */
@@ -146,9 +148,21 @@ export function buildSliceBlueprint(
   ).sort((a, b) => Math.atan2(a.from.x + a.to.x, -a.from.y - a.to.y)
     - Math.atan2(b.from.x + b.to.x, -b.from.y - b.to.y));
 
+  // One SVG element keeps dense polar slices cheap to render. Canonical
+  // left-to-right / top-to-bottom edges retain every block division without
+  // overdrawing a shared edge twice or confusing it with the outer contour.
+  const cellEdges = new Set<string>();
+  for (const { x, y } of shellCells) {
+    cellEdges.add(`M${x} ${y}h1`);
+    cellEdges.add(`M${x} ${y + 1}h1`);
+    cellEdges.add(`M${x} ${y}v1`);
+    cellEdges.add(`M${x + 1} ${y}v1`);
+  }
+
   return {
     plane, layer, coordinate, diameter, solidCount, shellCells, bounds, outline, segments, dimensionSegments,
     shellPath: shellCells.map(cell => `M${cell.x} ${cell.y}h1v1h-1Z`).join(''),
+    shellEdgesPath: [...cellEdges].join(''),
     outlinePath: outline.length ? `M${outline.map(point => `${point.x} ${point.y}`).join('L')}Z` : '',
     slabs: diameter === SPHERE_DIAMETER ? sliceSlabs(plane, coordinate) : [],
   };

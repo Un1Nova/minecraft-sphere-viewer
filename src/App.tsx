@@ -15,7 +15,7 @@ function readSettings(): ViewerSettings {
     const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (saved && typeof saved === 'object') {
       const value = saved as Record<string, unknown>;
-      const boolKeys = ['cutaway', 'shellVisible', 'glassVisible', 'starsVisible', 'autoRotate', 'showGrid'] as const;
+      const boolKeys = ['cutaway', 'shellVisible', 'glassVisible', 'starsVisible', 'autoRotate', 'showGrid', 'shadows'] as const;
       for (const key of boolKeys) if (typeof value[key] === 'boolean') settings[key] = value[key];
       const ranges = { cutPosition: [0.25, 0.95], shellOpacity: [0, 1], glassOpacity: [0.04, 0.3], starIntensity: [0.25, 2.2] } as const;
       for (const key of Object.keys(ranges) as (keyof typeof ranges)[]) {
@@ -24,6 +24,7 @@ function readSettings(): ViewerSettings {
       }
       if (value.quality === 'auto' || value.quality === 'high' || value.quality === 'low') settings.quality = value.quality;
       if (value.chunkMode === 'off' || value.chunkMode === 'borders' || value.chunkMode === 'grid') settings.chunkMode = value.chunkMode;
+      if (value.shellStyle === 'solid' || value.shellStyle === 'edges') settings.shellStyle = value.shellStyle;
     }
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) settings.autoRotate = false;
   } catch { /* Preference storage is optional. */ }
@@ -75,7 +76,7 @@ function ToolButton({ label, icon, active = false, disabled = false, onClick, cl
     <Icon name={icon} /><span className="tool-tip" aria-hidden="true">{label}</span></button>;
 }
 const VIEWS: { preset: ViewPreset; icon: IconName; title: string }[] = [
-  { preset: 'perspective', icon: 'orbit', title: 'Общий вид' }, { preset: 'front', icon: 'front', title: 'Спереди' },
+  { preset: 'perspective', icon: 'orbit', title: 'Общий вид' }, { preset: 'corner', icon: 'cube', title: 'Угол XYZ' }, { preset: 'front', icon: 'front', title: 'Спереди' },
   { preset: 'top', icon: 'top', title: 'Сверху' }, { preset: 'inside', icon: 'inside', title: 'Внутри' },
 ];
 const PLANES: { plane: BlueprintPlane; icon: IconName; title: string; axis: string }[] = [
@@ -142,7 +143,10 @@ export default function App() {
 
   function change<K extends keyof ViewerSettings>(key: K, value: ViewerSettings[K]) { setSettings(previous => ({ ...previous, [key]: value })); }
   function changeMode(next: ViewerMode) { setMode(next); setPanelOpen(false); }
-  function selectView(preset: ViewPreset) { controllerRef.current?.setView(preset); setSelectedView(preset); }
+  function selectView(preset: ViewPreset) {
+    if (preset === 'corner') setSettings(previous => ({ ...previous, cutaway: false, shellVisible: true, shellOpacity: 1, autoRotate: false }));
+    controllerRef.current?.setView(preset); setSelectedView(preset);
+  }
   function selectChunkMode(next: ChunkMode) { if (next !== 'off') setLastChunkMode(next); change('chunkMode', next); }
   function zoom(direction: -1 | 1) { if (mode === '2d') blueprintRef.current?.zoom(direction > 0 ? 1.25 : 0.8); else controllerRef.current?.zoom(direction); }
   function resetView() { if (mode === '2d') blueprintRef.current?.reset(); else { controllerRef.current?.resetCamera(); setSelectedView('perspective'); } }
@@ -157,7 +161,7 @@ export default function App() {
         {error && <div className="scene-error" role="alert"><Icon name="orbit" size={32} /><h2>3D недоступно</h2><p>Открой точный чертёж или попробуй ещё раз.</p>
           <button className="primary-button" onClick={() => changeMode('2d')}>Открыть 2D</button><button className="text-button" onClick={() => setBoot(value => value + 1)}>Повторить</button>
           <details className="error-detail"><summary>Причина</summary><p>{error}</p></details></div>}
-      </> : <div className="blueprint-mount"><BlueprintView ref={blueprintRef} plane={plane} layer={layer} dimensions={dimensions} showGrid={settings.showGrid} chunkMode={settings.chunkMode} /></div>}
+      </> : <div className="blueprint-mount"><BlueprintView ref={blueprintRef} plane={plane} layer={layer} dimensions={dimensions} showGrid={settings.showGrid} chunkMode={settings.chunkMode} shellStyle={settings.shellStyle} /></div>}
     </section>
     <header className="topbar">
       <div className="brand"><Icon name="orbit" size={26} /><h1>Сфера</h1><span className="diameter-badge">196</span></div>
@@ -171,6 +175,14 @@ export default function App() {
     {panelOpen && <aside id="scene-settings" className="settings-panel" aria-label="Настройки сцены">
       <div className="panel-header"><h2>{mode === '3d' ? 'Сцена' : 'Чертёж'}</h2><button className="icon-button" onClick={() => setPanelOpen(false)} aria-label="Закрыть настройки"><Icon name="close" size={17} /></button></div>
       <div className="panel-scroll">
+        <section className="control-group block-style-group"><div className="control-heading">Блоки</div>
+          <div className="chunk-segment block-style-segment" role="group" aria-label="Вид блоков">
+            <button className={settings.shellStyle === 'solid' ? 'is-active' : ''} aria-pressed={settings.shellStyle === 'solid'} onClick={() => change('shellStyle', 'solid')}><i className="grey-block" />Серые</button>
+            <button className={settings.shellStyle === 'edges' ? 'is-active' : ''} aria-pressed={settings.shellStyle === 'edges'} onClick={() => change('shellStyle', 'edges')}><i className="red-block" />Контрастные</button>
+          </div>
+          {mode === '3d' && <><Toggle label="Тени от блоков" checked={settings.shadows} onChange={v => change('shadows', v)} disabled={settings.shellStyle === 'edges' || !settings.shellVisible} />
+            <button className="corner-button" onClick={() => { selectView('corner'); setPanelOpen(false); }} disabled={unavailable}><Icon name="cube" size={17} />Рассмотреть угол XYZ<Icon name="right" size={13} /></button></>}
+        </section>
         {mode === '3d' ? <section className="control-group">
           <Range label="Плотность блоков" value={Math.round(settings.shellOpacity * 100)} min={0} max={100} readout={Math.round(settings.shellOpacity * 100) + '%'} onChange={v => change('shellOpacity', v / 100)} disabled={!settings.shellVisible} />
           <Toggle label="Срез по камере" checked={settings.cutaway} onChange={v => change('cutaway', v)} disabled={!settings.shellVisible} />

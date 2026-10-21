@@ -56,6 +56,9 @@ svg { display: block; flex-shrink: 0; }
 .chunk-segment button { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 1; min-height: 32px; font-size: 10px; font-weight: 550; color: #858891; background: transparent; border-radius: 8px; }
 .chunk-segment button.is-active { color: #333641; background: #fff; box-shadow: 0 1px 4px rgba(31,38,55,.1); }
 .chunk-segment i { display: block; height: 5px; width: 5px; border-radius: 50%; }.red-dot { background: #e04444; }.yellow-dot { background: #c6a019; }
+.block-style-segment button { min-height: 35px; font-size: 11px; gap: 7px; }
+.block-style-segment i { width: 10px; height: 10px; border-radius: 2px; }.grey-block { background: #979a9f; border: 1px solid #85888d; }.red-block { border: 1.3px solid #e14c4c; background: transparent; }
+.corner-button { width: 100%; display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 0 2px; background: transparent; color: #007aff; font-size: 11px; text-align: left; }.corner-button > svg:last-child { margin-left: auto; opacity: .55; }
 .settings-details summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 17px 0; font-size: 12px; color: #737782; list-style: none; cursor: pointer; }
 .settings-details summary::-webkit-details-marker { display: none; }.settings-details summary > svg { color: #a0a3ad; transition: transform .16s ease; }
 .settings-details[open] summary > svg { transform: rotate(180deg); }.settings-details[open] summary { color: #414550; }.details-content { padding: 0 0 13px; }
@@ -99,6 +102,6 @@ svg { display: block; flex-shrink: 0; }
   .panel-header { padding: 10px 13px 3px 24px; }.panel-scroll { padding: 0 24px 16px; }.toggle-row, .range-caption { font-size: 13px; }.range-control input { height: 40px; }.chunk-segment button { font-size: 11px; min-height: 36px; }
   .slice-navigation { top: max(76px, calc(env(safe-area-inset-top) + 67px)); }
 }
-@media (max-width: 359px) { .brand h1 { display: none; }.camera-dock .icon-button { width: 42px; }.camera-dock { padding: 4px; } }
+@media (max-width: 359px) { .brand h1 { display: none; }.camera-dock .icon-button { width: 38px; padding: 8px; }.camera-dock { padding: 4px; } }
 @media (max-height: 540px) and (min-width: 601px) { .topbar { top: 14px; }.settings-panel { top: 72px; bottom: 14px; max-height: none; }.camera-dock { bottom: 14px; }.slice-navigation { top: 69px; } }
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
